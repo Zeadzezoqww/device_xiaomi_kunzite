@@ -173,7 +173,8 @@
             "Path": "/sys/devices/system/cpu/bus_dcvs/DDR/19091000.qcom,bwmon-ddr/io_percent",
             "Values": [
                 "68",
-                "100"
+                "100",
+                "50"
             ],
             "DefaultIndex": 0,
             "ResetOnInit": true
@@ -203,6 +204,28 @@
             "Values": [
                 "3",
                 "0"
+            ],
+            "DefaultIndex": 0,
+            "ResetOnInit": true
+        },
+        {
+            "Name": "sysClassKgslKgsl3dDevfreqMinFreq",
+            "Path": "/sys/class/kgsl/kgsl-3d0/devfreq/min_freq",
+            "Values": [
+                "295000000",
+                "500000000",
+                "600000000"
+            ],
+            "DefaultIndex": 0,
+            "ResetOnInit": true
+        },
+        {
+            "Name": "sysDevicesSystemCpuBusDcvsDDRBoostFreq",
+            "Path": "/sys/devices/system/cpu/bus_dcvs/DDR/boost_freq",
+            "Values": [
+                "547000",
+                "1353600",
+                "1555000"
             ],
             "DefaultIndex": 0,
             "ResetOnInit": true
@@ -290,6 +313,24 @@
             "Duration": 0
         },
         {
+            "PowerHint": "INTERACTION",
+            "Node": "sysClassKgslKgsl3dDevfreqMinFreq",
+            "Value": "500000000",
+            "Duration": 0
+        },
+        {
+            "PowerHint": "INTERACTION",
+            "Node": "sysDevicesSystemCpuBusDcvsDDRBoostFreq",
+            "Value": "1353600",
+            "Duration": 0
+        },
+        {
+            "PowerHint": "INTERACTION",
+            "Node": "sysDevicesSystemCpuBusDcvsDDR19091000QcomBwmonDdrIoPercent",
+            "Value": "50",
+            "Duration": 0
+        },
+        {
             "PowerHint": "LAUNCH",
             "Node": "procSysWaltSchedBoost",
             "Value": "1",
@@ -329,6 +370,18 @@
             "PowerHint": "LAUNCH",
             "Node": "sysDevicesSystemCpuCpufreqPolicy4WaltAdaptiveLevel1",
             "Value": "1190400",
+            "Duration": 2000
+        },
+        {
+            "PowerHint": "LAUNCH",
+            "Node": "sysClassKgslKgsl3dDevfreqMinFreq",
+            "Value": "600000000",
+            "Duration": 2000
+        },
+        {
+            "PowerHint": "LAUNCH",
+            "Node": "sysDevicesSystemCpuBusDcvsDDRBoostFreq",
+            "Value": "1555000",
             "Duration": 2000
         },
         {
