@@ -6,9 +6,7 @@ vendor.audio.usb_cctoggle u:object_r:vendor_audio_prop:s0 exact string
 persist.vendor.bt.a2dp_offload_cap u:object_r:vendor_bluetooth_prop:s0
 
 # Camera
-persist.vendor.miface.* u:object_r:vendor_miface_prop:s0
 ro.boot.camera.config u:object_r:vendor_camera_sensor_prop:s0
-vendor.miface.* u:object_r:vendor_miface_prop:s0
 vendor.camera. u:object_r:vendor_camera_prop:s0
 vendor.camera.sensor. u:object_r:vendor_camera_xiaomi_prop:s0
 vendor.camera.clientname u:object_r:vendor_packname_prop:s0
