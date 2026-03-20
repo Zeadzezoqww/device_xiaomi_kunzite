@@ -92,6 +92,7 @@ blob_fixups: blob_fixups_user_type = {
     'vendor/lib64/libqtigefar.so': blob_fixup()
         .replace_needed('android.hardware.audio.core-V1-ndk.so', 'android.hardware.audio.core-V2-ndk.so'),
     (
+        'vendor/lib64/soundfx/libbundleaidl.so',
         'vendor/lib64/soundfx/libhwdapaidl.so',
         'vendor/lib64/soundfx/libswgamedapaidl.so',
     ): blob_fixup()
