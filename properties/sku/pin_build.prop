@@ -5,6 +5,7 @@ bluetooth.device.default_name=POCO M8 5G
 ro.product.odm.brand=POCO
 ro.product.odm.model=25118PC98I
 ro.product.odm.name=kunzite_p_in
+ro.product.odm.marketname=POCO M8 5G
 
 # USB
 vendor.usb.product_string=POCO M8 5G

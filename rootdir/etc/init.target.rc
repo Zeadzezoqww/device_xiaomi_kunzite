@@ -488,11 +488,26 @@ on property:persist.vendor.cnss_diag.enable=true
 on property:persist.vendor.cnss_diag.enable=false
     stop vendor.cnss_diag
 
-on property:ro.product.odm.marketname=Redmi
+on init && property:ro.boot.product.hardware.sku=pgl
+    setprop ro.boot.camera.config 0
+
+on init && property:ro.boot.product.hardware.sku=pin
+    setprop ro.boot.camera.config 0
+
+on init && property:ro.boot.product.hardware.sku=rgl
     setprop ro.boot.camera.config 1
 
-on property:ro.product.odm.marketname=POCO
-    setprop ro.boot.camera.config 0
+on init && property:ro.boot.product.hardware.sku=rin
+    setprop ro.boot.camera.config 1
+
+on init && property:ro.boot.product.hardware.sku=rsa
+    setprop ro.boot.camera.config 1
+
+on init && property:ro.boot.product.hardware.sku=rinx
+    setprop ro.boot.camera.config 1
+
+on init && property:ro.boot.product.hardware.sku=rcn
+    setprop ro.boot.camera.config 1
 
 service vendor.cnss_diag /system/vendor/bin/cnss_diag -q -f -t HELIUM
    class main
