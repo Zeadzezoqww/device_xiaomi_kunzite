@@ -31,7 +31,7 @@ ro.vendor.audio.volume.boost.support=15
 vendor.audio.timecheck_timeoutMs=10000
 
 # Display
-ro.surface_flinger.enable_frame_rate_override=false
+vendor.display.force_tonemapping=1
 
 # Radio
 persist.vendor.radio.dynamic_sar=1
