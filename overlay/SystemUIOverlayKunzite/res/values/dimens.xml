@@ -18,7 +18,7 @@
 
     <!-- keyguard / lockscreen -->
     <dimen name="status_bar_header_height_keyguard">@*android:dimen/status_bar_height_portrait</dimen>
-    <dimen name="keyguard_carrier_text_margin">46.0px</dimen>
+    <dimen name="keyguard_carrier_text_margin">48.0px</dimen>
     <dimen name="keyguard_indication_margin_bottom">341.25px</dimen>
 
     <!-- rounded corners -->
