@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2024 The LineageOS Project
- *
+ * SPDX-FileCopyrightText: The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,7 +14,6 @@
 #include <chrono>
 #include <cstring>
 #include <fcntl.h>
-#include <fstream>
 #include <poll.h>
 #include <sys/ioctl.h>
 #include <thread>
@@ -50,12 +48,8 @@
 
 #define DISP_FEATURE_PATH "/dev/mi_display/disp_feature"
 
-#define FOD_PRESS_STATUS_PATH "/sys/class/touch/touch_dev/fod_press_status"
-
 // vendorCode values from onAcquired()
 #define VENDOR_ACQUIRED_WAITING_FOR_FINGER 21
-#define VENDOR_ACQUIRED_FINGER_DOWN 22
-#define VENDOR_ACQUIRED_FINGER_UP 23
 
 typedef struct {
     int8_t touch_id;
@@ -72,53 +66,32 @@ using ::aidl::android::hardware::biometrics::fingerprint::AcquiredInfo;
 
 namespace {
 
-// Window (in ms) after a successful authentication during which a late
-// onFingerDown() is still considered part of the attempt that just finished.
-// Once it elapses, any onFingerDown() is treated as a new attempt.
-static constexpr int64_t kLateDownWindowMs = 300;
+// A late onFingerDown() arriving within this window after a successful
+// authentication belongs to the attempt that just finished. After it, any
+// onFingerDown() is a new attempt.
+constexpr int64_t kLateDownWindowMs = 300;
 
-static int64_t nowMs() {
+int64_t nowMs() {
     using namespace std::chrono;
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
-static bool readBool(int fd) {
-    char c;
-    int rc;
+disp_event_resp* parseDispEvent(int fd) {
+    static char event_data[1024];
+    memset(event_data, 0, sizeof(event_data));
 
-    rc = lseek(fd, 0, SEEK_SET);
-    if (rc) {
-        LOG(ERROR) << "failed to seek fd, err: " << rc;
-        return false;
-    }
-
-    rc = read(fd, &c, sizeof(char));
-    if (rc != 1) {
-        LOG(ERROR) << "failed to read bool from fd, err: " << rc;
-        return false;
-    }
-
-    return c != '0';
-}
-
-static disp_event_resp* parseDispEvent(int fd) {
-    static char event_data[1024] = {0};
-    ssize_t size;
-
-    memset(event_data, 0x0, sizeof(event_data));
-    size = read(fd, event_data, sizeof(event_data));
+    ssize_t size = read(fd, event_data, sizeof(event_data));
     if (size < 0) {
         LOG(ERROR) << "read fod event failed";
         return nullptr;
     }
-
     if (static_cast<size_t>(size) < sizeof(struct disp_event)) {
         LOG(ERROR) << "Invalid event size " << size << ", expect at least "
                    << sizeof(struct disp_event);
         return nullptr;
     }
 
-    return (struct disp_event_resp*)&event_data[0];
+    return reinterpret_cast<disp_event_resp*>(event_data);
 }
 
 struct disp_base displayBasePrimary = {
@@ -143,67 +116,15 @@ class XiaomiKunziteUdfpsHandler : public UdfpsHandler {
         touch_fd_ = android::base::unique_fd(open(TOUCH_DEV_PATH, O_RDWR));
         disp_fd_ = android::base::unique_fd(open(DISP_FEATURE_PATH, O_RDWR));
 
-        // Thread to listen for fod ui changes
-        std::thread([this]() {
-            android::base::unique_fd fd(open(DISP_FEATURE_PATH, O_RDWR));
-            if (fd < 0) {
-                LOG(ERROR) << "failed to open " << DISP_FEATURE_PATH << " , err: " << fd;
-                return;
-            }
-
-            // Register for FOD events
-            struct disp_event_req displayEventRequest = {
-                    .base = displayBasePrimary,
-                    .type = MI_DISP_EVENT_FOD,
-            };
-            if (ioctl(fd.get(), MI_DISP_IOCTL_REGISTER_EVENT, &displayEventRequest) < 0) {
-                LOG(ERROR) << "failed to register FOD event";
-                return;
-            }
-
-            struct pollfd dispEventPoll = {
-                    .fd = fd.get(),
-                    .events = POLLIN,
-                    .revents = 0,
-            };
-
-            while (true) {
-                int rc = poll(&dispEventPoll, 1, -1);
-                if (rc < 0) {
-                    LOG(ERROR) << "failed to poll " << DISP_FEATURE_PATH << ", err: " << rc;
-                    // Avoid a busy loop if poll() keeps failing
-                    usleep(10 * 1000);
-                    continue;
-                }
-
-                struct disp_event_resp* response = parseDispEvent(fd.get());
-                if (response == nullptr) {
-                    continue;
-                }
-
-                if (response->base.type != MI_DISP_EVENT_FOD) {
-                    LOG(ERROR) << "unexpected display event: " << response->base.type;
-                    continue;
-                }
-
-                int value = response->data[0];
-                LOG(DEBUG) << "received data: " << std::bitset<8>(value);
-
-                bool localHbmUiReady = value & LOCAL_HBM_UI_READY;
-
-                mDevice->extCmd(mDevice, COMMAND_NIT,
-                                localHbmUiReady ? PARAM_NIT_FOD : PARAM_NIT_NONE);
-            }
-        }).detach();
+        std::thread([this]() { listenFodEvents(); }).detach();
     }
 
     void onFingerDown(uint32_t /*x*/, uint32_t /*y*/, float /*minor*/, float /*major*/) {
-        // onFingerDown() runs on the binder/input thread and can race with
-        // authentication completing on the HAL callback thread. Only ignore a
-        // late "down" right after a success. Once the window has elapsed this
-        // is a new attempt, so the flag is cleared here instead of relying on
-        // the HAL emitting vendorCode 21 or the framework calling cancel()
-        // (the FPC HAL does neither between attempts).
+        // Runs on the binder/input thread and can race with authentication
+        // completing on the HAL callback thread, so drop a late "down" right
+        // after a success. Past the window this is a new attempt: clear the
+        // flag here, since the FPC HAL neither emits vendorCode 21 nor gets
+        // cancel() called between attempts.
         if (mAuthSuccess.load(std::memory_order_acquire)) {
             int64_t elapsed = nowMs() - mAuthSuccessMs.load(std::memory_order_relaxed);
             if (elapsed < kLateDownWindowMs) {
@@ -215,40 +136,21 @@ class XiaomiKunziteUdfpsHandler : public UdfpsHandler {
         }
 
         LOG(INFO) << __func__;
-
-        // Notify HAL about finger press
         mDevice->extCmd(mDevice, COMMAND_FOD_PRESS_STATUS, PARAM_FOD_PRESSED);
-
-        // Turn on HBM
-        struct disp_local_hbm_req displayLhbmRequest = {
-                .base = displayBasePrimary,
-                .local_hbm_value = LHBM_TARGET_BRIGHTNESS_WHITE_1000NIT,
-        };
-        ioctl(disp_fd_.get(), MI_DISP_IOCTL_SET_LOCAL_HBM, &displayLhbmRequest);
-
-        // Ensure touchscreen is aware of the press state
-        setFingerDown(true);
+        setLocalHbm(LHBM_TARGET_BRIGHTNESS_WHITE_1000NIT);
+        setTouchMode(THP_FOD_DOWNUP_CTL, 1);
     }
 
     void onFingerUp() {
         LOG(INFO) << __func__;
-        
-        // Notify HAL about finger release
         mDevice->extCmd(mDevice, COMMAND_FOD_PRESS_STATUS, PARAM_FOD_RELEASED);
-
-        // Turn off HBM
-        struct disp_local_hbm_req displayLhbmRequest = {
-                .base = displayBasePrimary,
-                .local_hbm_value = LHBM_TARGET_BRIGHTNESS_OFF_FINGER_UP,
-        };
-        ioctl(disp_fd_.get(), MI_DISP_IOCTL_SET_LOCAL_HBM, &displayLhbmRequest);
-
-        // Ensure touchscreen is aware of the press state
-        setFingerDown(false);
+        setLocalHbm(LHBM_TARGET_BRIGHTNESS_OFF_FINGER_UP);
+        setTouchMode(THP_FOD_DOWNUP_CTL, 0);
     }
 
     void onAcquired(int32_t result, int32_t vendorCode) {
         LOG(INFO) << __func__ << " result: " << result << " vendorCode: " << vendorCode;
+
         switch (static_cast<AcquiredInfo>(result)) {
             case AcquiredInfo::GOOD:
             case AcquiredInfo::PARTIAL:
@@ -260,33 +162,21 @@ class XiaomiKunziteUdfpsHandler : public UdfpsHandler {
             case AcquiredInfo::TOO_BRIGHT:
             case AcquiredInfo::IMMOBILE:
             case AcquiredInfo::LIFT_TOO_SOON:
-                {
-                    struct disp_local_hbm_req displayLhbmRequest = {
-                        .base = displayBasePrimary,
-                        .local_hbm_value = LHBM_TARGET_BRIGHTNESS_OFF_FINGER_UP,
-                    };
-                    ioctl(disp_fd_.get(), MI_DISP_IOCTL_SET_LOCAL_HBM, &displayLhbmRequest);
-                    break;
-                }
+                setLocalHbm(LHBM_TARGET_BRIGHTNESS_OFF_FINGER_UP);
+                break;
             default:
                 break;
         }
 
-        /* vendorCode
-         * 21: waiting for finger
-         * 22: finger down
-         * 23: finger up
-         */
         if (vendorCode == VENDOR_ACQUIRED_WAITING_FOR_FINGER) {
             mAuthSuccess.store(false, std::memory_order_release);
-            setFodStatus(FOD_STATUS_ON);
+            setTouchMode(Touch_Fod_Enable, FOD_STATUS_ON);
         }
     }
 
     void onAuthenticationSucceeded() {
         LOG(INFO) << __func__;
-        // Store the timestamp BEFORE the flag, so that any reader of the flag
-        // (acquire) always sees the matching timestamp.
+        // Timestamp first, so a reader that sees the flag (acquire) also sees it.
         mAuthSuccessMs.store(nowMs(), std::memory_order_relaxed);
         mAuthSuccess.store(true, std::memory_order_release);
         onFingerUp();
@@ -301,14 +191,8 @@ class XiaomiKunziteUdfpsHandler : public UdfpsHandler {
     void cancel() {
         LOG(INFO) << __func__;
         mAuthSuccess.store(false, std::memory_order_release);
-        setFodStatus(FOD_STATUS_OFF);
-
-        // Turn off HBM on cancel
-        struct disp_local_hbm_req displayLhbmRequest = {
-            .base = displayBasePrimary,
-            .local_hbm_value = LHBM_TARGET_BRIGHTNESS_OFF_FINGER_UP,
-        };
-        ioctl(disp_fd_.get(), MI_DISP_IOCTL_SET_LOCAL_HBM, &displayLhbmRequest);
+        setTouchMode(Touch_Fod_Enable, FOD_STATUS_OFF);
+        setLocalHbm(LHBM_TARGET_BRIGHTNESS_OFF_FINGER_UP);
     }
 
   private:
@@ -316,24 +200,69 @@ class XiaomiKunziteUdfpsHandler : public UdfpsHandler {
     android::base::unique_fd touch_fd_;
     android::base::unique_fd disp_fd_;
 
-    // Accessed from both the binder/input thread and the HAL callback
-    // thread, hence atomic rather than plain types.
+    // Shared between the binder/input thread and the HAL callback thread.
     std::atomic<bool> mAuthSuccess{false};
     std::atomic<int64_t> mAuthSuccessMs{0};
 
-    void setFodStatus(int value) {
-        ioctl(touch_fd_.get(), TOUCH_IOC_SELECT_TOUCH_ID, MI_DISP_PRIMARY);
-        touch_base data = touchDataPrimary;
-        data.mode = Touch_Fod_Enable;
-        data.data_buf[0] = value;
-        ioctl(touch_fd_.get(), TOUCH_IOC_COMMON_DATA, &data);
+    void listenFodEvents() {
+        android::base::unique_fd fd(open(DISP_FEATURE_PATH, O_RDWR));
+        if (fd < 0) {
+            LOG(ERROR) << "failed to open " << DISP_FEATURE_PATH;
+            return;
+        }
+
+        struct disp_event_req displayEventRequest = {
+                .base = displayBasePrimary,
+                .type = MI_DISP_EVENT_FOD,
+        };
+        if (ioctl(fd.get(), MI_DISP_IOCTL_REGISTER_EVENT, &displayEventRequest) < 0) {
+            LOG(ERROR) << "failed to register FOD event";
+            return;
+        }
+
+        struct pollfd dispEventPoll = {
+                .fd = fd.get(),
+                .events = POLLIN,
+                .revents = 0,
+        };
+
+        while (true) {
+            if (poll(&dispEventPoll, 1, -1) < 0) {
+                LOG(ERROR) << "failed to poll " << DISP_FEATURE_PATH;
+                usleep(10 * 1000);  // avoid a busy loop if poll() keeps failing
+                continue;
+            }
+
+            struct disp_event_resp* response = parseDispEvent(fd.get());
+            if (response == nullptr) {
+                continue;
+            }
+            if (response->base.type != MI_DISP_EVENT_FOD) {
+                LOG(ERROR) << "unexpected display event: " << response->base.type;
+                continue;
+            }
+
+            int value = response->data[0];
+            LOG(DEBUG) << "received data: " << std::bitset<8>(value);
+
+            bool localHbmUiReady = value & LOCAL_HBM_UI_READY;
+            mDevice->extCmd(mDevice, COMMAND_NIT,
+                            localHbmUiReady ? PARAM_NIT_FOD : PARAM_NIT_NONE);
+        }
     }
 
-    void setFingerDown(bool pressed) {
+    void setLocalHbm(int value) {
+        struct disp_local_hbm_req request = {};
+        request.base = displayBasePrimary;
+        request.local_hbm_value = value;
+        ioctl(disp_fd_.get(), MI_DISP_IOCTL_SET_LOCAL_HBM, &request);
+    }
+
+    void setTouchMode(uint16_t mode, int value) {
         ioctl(touch_fd_.get(), TOUCH_IOC_SELECT_TOUCH_ID, MI_DISP_PRIMARY);
         touch_base data = touchDataPrimary;
-        data.mode = THP_FOD_DOWNUP_CTL;
-        data.data_buf[0] = pressed ? 1 : 0;
+        data.mode = mode;
+        data.data_buf[0] = value;
         ioctl(touch_fd_.get(), TOUCH_IOC_COMMON_DATA, &data);
     }
 };
