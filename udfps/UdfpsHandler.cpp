@@ -11,10 +11,15 @@
 #include <android-base/unique_fd.h>
 
 #include <atomic>
+#include <bitset>
+#include <chrono>
+#include <cstring>
+#include <fcntl.h>
+#include <fstream>
 #include <poll.h>
 #include <sys/ioctl.h>
-#include <fstream>
 #include <thread>
+#include <unistd.h>
 
 #include <display/drm/mi_disp.h>
 
@@ -67,6 +72,16 @@ using ::aidl::android::hardware::biometrics::fingerprint::AcquiredInfo;
 
 namespace {
 
+// Window (in ms) after a successful authentication during which a late
+// onFingerDown() is still considered part of the attempt that just finished.
+// Once it elapses, any onFingerDown() is treated as a new attempt.
+static constexpr int64_t kLateDownWindowMs = 300;
+
+static int64_t nowMs() {
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
 static bool readBool(int fd) {
     char c;
     int rc;
@@ -97,7 +112,7 @@ static disp_event_resp* parseDispEvent(int fd) {
         return nullptr;
     }
 
-    if (size < sizeof(struct disp_event)) {
+    if (static_cast<size_t>(size) < sizeof(struct disp_event)) {
         LOG(ERROR) << "Invalid event size " << size << ", expect at least "
                    << sizeof(struct disp_event);
         return nullptr;
@@ -156,10 +171,12 @@ class XiaomiKunziteUdfpsHandler : public UdfpsHandler {
                 int rc = poll(&dispEventPoll, 1, -1);
                 if (rc < 0) {
                     LOG(ERROR) << "failed to poll " << DISP_FEATURE_PATH << ", err: " << rc;
+                    // Avoid a busy loop if poll() keeps failing
+                    usleep(10 * 1000);
                     continue;
                 }
 
-                struct disp_event_resp* response = parseDispEvent(fd);
+                struct disp_event_resp* response = parseDispEvent(fd.get());
                 if (response == nullptr) {
                     continue;
                 }
@@ -182,22 +199,33 @@ class XiaomiKunziteUdfpsHandler : public UdfpsHandler {
 
     void onFingerDown(uint32_t /*x*/, uint32_t /*y*/, float /*minor*/, float /*major*/) {
         // onFingerDown() runs on the binder/input thread and can race with
-        // authentication completing on the HAL callback thread. Skip if
-        // this attempt already succeeded (see mAuthSuccess below).
-        if (mAuthSuccess.load(std::memory_order_acquire)) return;
+        // authentication completing on the HAL callback thread. Only ignore a
+        // late "down" right after a success. Once the window has elapsed this
+        // is a new attempt, so the flag is cleared here instead of relying on
+        // the HAL emitting vendorCode 21 or the framework calling cancel()
+        // (the FPC HAL does neither between attempts).
+        if (mAuthSuccess.load(std::memory_order_acquire)) {
+            int64_t elapsed = nowMs() - mAuthSuccessMs.load(std::memory_order_relaxed);
+            if (elapsed < kLateDownWindowMs) {
+                LOG(INFO) << __func__ << " ignored: late down " << elapsed
+                          << "ms after auth success";
+                return;
+            }
+            mAuthSuccess.store(false, std::memory_order_release);
+        }
 
         LOG(INFO) << __func__;
-        
+
         // Notify HAL about finger press
         mDevice->extCmd(mDevice, COMMAND_FOD_PRESS_STATUS, PARAM_FOD_PRESSED);
-        
+
         // Turn on HBM
         struct disp_local_hbm_req displayLhbmRequest = {
                 .base = displayBasePrimary,
                 .local_hbm_value = LHBM_TARGET_BRIGHTNESS_WHITE_1000NIT,
         };
         ioctl(disp_fd_.get(), MI_DISP_IOCTL_SET_LOCAL_HBM, &displayLhbmRequest);
-        
+
         // Ensure touchscreen is aware of the press state
         setFingerDown(true);
     }
@@ -207,14 +235,14 @@ class XiaomiKunziteUdfpsHandler : public UdfpsHandler {
         
         // Notify HAL about finger release
         mDevice->extCmd(mDevice, COMMAND_FOD_PRESS_STATUS, PARAM_FOD_RELEASED);
-        
+
         // Turn off HBM
         struct disp_local_hbm_req displayLhbmRequest = {
                 .base = displayBasePrimary,
                 .local_hbm_value = LHBM_TARGET_BRIGHTNESS_OFF_FINGER_UP,
         };
         ioctl(disp_fd_.get(), MI_DISP_IOCTL_SET_LOCAL_HBM, &displayLhbmRequest);
-        
+
         // Ensure touchscreen is aware of the press state
         setFingerDown(false);
     }
@@ -257,6 +285,9 @@ class XiaomiKunziteUdfpsHandler : public UdfpsHandler {
 
     void onAuthenticationSucceeded() {
         LOG(INFO) << __func__;
+        // Store the timestamp BEFORE the flag, so that any reader of the flag
+        // (acquire) always sees the matching timestamp.
+        mAuthSuccessMs.store(nowMs(), std::memory_order_relaxed);
         mAuthSuccess.store(true, std::memory_order_release);
         onFingerUp();
     }
@@ -271,7 +302,7 @@ class XiaomiKunziteUdfpsHandler : public UdfpsHandler {
         LOG(INFO) << __func__;
         mAuthSuccess.store(false, std::memory_order_release);
         setFodStatus(FOD_STATUS_OFF);
-        
+
         // Turn off HBM on cancel
         struct disp_local_hbm_req displayLhbmRequest = {
             .base = displayBasePrimary,
@@ -286,8 +317,9 @@ class XiaomiKunziteUdfpsHandler : public UdfpsHandler {
     android::base::unique_fd disp_fd_;
 
     // Accessed from both the binder/input thread and the HAL callback
-    // thread, hence atomic rather than a plain bool.
+    // thread, hence atomic rather than plain types.
     std::atomic<bool> mAuthSuccess{false};
+    std::atomic<int64_t> mAuthSuccessMs{0};
 
     void setFodStatus(int value) {
         ioctl(touch_fd_.get(), TOUCH_IOC_SELECT_TOUCH_ID, MI_DISP_PRIMARY);
