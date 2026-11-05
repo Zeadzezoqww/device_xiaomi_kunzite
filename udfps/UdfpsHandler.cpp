@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <bitset>
+#include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <fcntl.h>
@@ -116,6 +117,10 @@ class XiaomiKunziteUdfpsHandler : public UdfpsHandler {
         touch_fd_ = android::base::unique_fd(open(TOUCH_DEV_PATH, O_RDWR));
         disp_fd_ = android::base::unique_fd(open(DISP_FEATURE_PATH, O_RDWR));
 
+        // Arm FOD in the touch IC up front: the FPC HAL never sends
+        // vendorCode 21, so onAcquired() would never do it.
+        setTouchMode(Touch_Fod_Enable, FOD_STATUS_ON);
+
         std::thread([this]() { listenFodEvents(); }).detach();
     }
 
@@ -191,7 +196,8 @@ class XiaomiKunziteUdfpsHandler : public UdfpsHandler {
     void cancel() {
         LOG(INFO) << __func__;
         mAuthSuccess.store(false, std::memory_order_release);
-        setTouchMode(Touch_Fod_Enable, FOD_STATUS_OFF);
+        // FOD stays armed in the touch IC so it can detect a finger while the
+        // screen is off; only the HBM is turned off here.
         setLocalHbm(LHBM_TARGET_BRIGHTNESS_OFF_FINGER_UP);
     }
 
@@ -263,7 +269,10 @@ class XiaomiKunziteUdfpsHandler : public UdfpsHandler {
         touch_base data = touchDataPrimary;
         data.mode = mode;
         data.data_buf[0] = value;
-        ioctl(touch_fd_.get(), TOUCH_IOC_COMMON_DATA, &data);
+        if (ioctl(touch_fd_.get(), TOUCH_IOC_COMMON_DATA, &data) < 0) {
+            LOG(ERROR) << __func__ << " mode=" << mode << " value=" << value
+                       << " failed: " << strerror(errno);
+        }
     }
 };
 
