@@ -1,0 +1,53 @@
+aidl_interface {
+    name: "vendor.penguin.duckrkp",
+    owner: "xiaomi",
+    vendor_available: true,
+    stability: "vintf",
+    local_include_dir: "aidl",
+    srcs: [
+        "aidl/vendor/penguin/duckrkp/IDuckRkp.aidl",
+    ],
+    backend: {
+        java: {
+            enabled: false,
+        },
+        cpp: {
+            enabled: false,
+        },
+        ndk: {
+            enabled: true,
+        },
+    },
+    versions_with_info: [
+        {
+            version: "1",
+            imports: [],
+        },
+    ],
+    frozen: true,
+}
+
+cc_binary {
+    name: "duck_rkp",
+    vendor: true,
+    compile_multilib: "64",
+    srcs: ["duck_rkp.cpp"],
+    shared_libs: [
+        "libbase",
+        "libcrypto",
+        "libdl",
+        "libbinder_ndk",
+        "vendor.penguin.duckrkp-V1-ndk",
+    ],
+    static_libs: ["libcppbor"],
+    cflags: ["-Wall", "-Wextra", "-Werror"],
+    init_rc: ["duck_rkp.rc"],
+    vintf_fragments: ["duck_rkp.xml"],
+    licenses: ["duck_rkp_license"],
+}
+
+license {
+    name: "duck_rkp_license",
+    license_kinds: ["SPDX-license-identifier-MIT"],
+    license_text: ["NOTICE"],
+}

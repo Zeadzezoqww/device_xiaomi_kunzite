@@ -77,3 +77,4 @@
 
 # WLAN
 /data/vendor/mac_addr(/.*)? u:object_r:vendor_mac_vendor_data_file:s0
+/vendor/bin/duck_rkp u:object_r:duck_rkp_exec:s0

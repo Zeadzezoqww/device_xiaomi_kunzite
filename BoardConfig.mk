@@ -250,3 +250,6 @@ include vendor/xiaomi/kunzite/BoardConfigVendor.mk
 
 # Vendor MiuiCamera
 -include device/xiaomi/kunzite-miuicamera/BoardConfig.mk
+
+# Duck RKP
+DEVICE_FRAMEWORK_COMPATIBILITY_MATRIX_FILE += device/xiaomi/kunzite/duck-rkp/compatibility_matrix.xml

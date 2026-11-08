@@ -468,3 +468,10 @@ $(call inherit-product, vendor/xiaomi/kunzite/kunzite-vendor.mk)
 
 # Vendor MiuiCamera
 $(call inherit-product-if-exists, device/xiaomi/kunzite-miuicamera/device.mk)
+
+# Duck RKP HAL
+PRODUCT_PACKAGES += \
+    duck_rkp
+
+PRODUCT_VENDOR_PROPERTIES += \
+    remote_provisioning.hostname=remoteprovisioning.googleapis.com

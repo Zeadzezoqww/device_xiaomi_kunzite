@@ -25,3 +25,4 @@ vendor.xiaomi.hw.touchfeature.ITouchFeature/default          u:object_r:hal_touc
 
 # Vibrator
 android.hardware.vibrator.IVibrator/vibratorfeature                          u:object_r:hal_vibrator_service:s0
+vendor.penguin.duckrkp.IDuckRkp/default u:object_r:hal_duck_rkp_service:s0
